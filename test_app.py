@@ -1,3 +1,4 @@
+
 import unittest
 
 from app import app
@@ -12,7 +13,10 @@ class TestPredictionApplication(unittest.TestCase):
         response = self.client.get("/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["status"], "ok")
+        self.assertEqual(
+            response.get_json()["status"],
+            "ok"
+        )
 
     def test_high_performance_prediction(self):
         response = self.client.post(
@@ -21,7 +25,7 @@ class TestPredictionApplication(unittest.TestCase):
                 "attendance": 90,
                 "internal_marks": 85,
                 "assignment_marks": 88,
-                "previous_score": 80
+                "previous_score": 80,
             }
         )
 
@@ -38,7 +42,7 @@ class TestPredictionApplication(unittest.TestCase):
                 "attendance": 55,
                 "internal_marks": 30,
                 "assignment_marks": 40,
-                "previous_score": 35
+                "previous_score": 35,
             }
         )
 
@@ -53,7 +57,7 @@ class TestPredictionApplication(unittest.TestCase):
             "/predict",
             json={
                 "attendance": 90,
-                "internal_marks": 85
+                "internal_marks": 85,
             }
         )
 
