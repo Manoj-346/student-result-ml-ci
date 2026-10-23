@@ -1,3 +1,4 @@
+
 name: Student Result ML CI-CD
 
 on:
@@ -15,20 +16,17 @@ permissions:
   contents: read
 
 jobs:
-
   train-test-deliver:
-
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
@@ -55,10 +53,7 @@ jobs:
           cp student_result_model.pkl release_candidate/
           cp metrics.json release_candidate/
           cp requirements.txt release_candidate/
-          printf "Student Result Prediction ML Application
-Run: python app.py
-Endpoint: POST /predict
-" > release_candidate/DEPLOYMENT.txt
+          printf "Student Result Prediction ML Application\nRun: python app.py\nEndpoint: POST /predict\n" > release_candidate/DEPLOYMENT.txt
 
       - name: Upload release candidate
         uses: actions/upload-artifact@v4
