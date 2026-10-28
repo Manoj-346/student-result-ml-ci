@@ -28,18 +28,33 @@ def load_model():
 
 
 @app.get("/")
-def health_check():
+def home():
     return jsonify({
         "status": "ok",
         "service": "student-result-prediction",
-    })
+    }), 200
+
+
+@app.get("/health")
+def health_check():
+    try:
+        load_model()
+        return jsonify({
+            "status": "healthy",
+            "service": "student-result-prediction",
+        }), 200
+    except (FileNotFoundError, OSError, ValueError):
+        app.logger.exception("Health check failed")
+        return jsonify({
+            "status": "unhealthy",
+        }), 503
 
 
 @app.post("/predict")
 def predict():
     data = request.get_json(silent=True)
 
-    if not data:
+    if not isinstance(data, dict):
         return jsonify({
             "error": "JSON request body is required"
         }), 400
@@ -57,7 +72,7 @@ def predict():
 
     try:
         sample = pd.DataFrame([{
-            feature: data[feature]
+            feature: float(data[feature])
             for feature in FEATURES
         }])
 
@@ -68,7 +83,7 @@ def predict():
         return jsonify({
             "prediction": prediction,
             "prediction_code": prediction_code,
-        })
+        }), 200
 
     except (TypeError, ValueError):
         return jsonify({
