@@ -1,3 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+app_practical12_backup.py
+__pycache__/
+.pytest_cache/

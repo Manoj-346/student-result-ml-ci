@@ -17,14 +17,21 @@ from prometheus_client import (
 
 app = Flask(__name__)
 
-# Practical 11 logging
+# --------------------------------------------------
+# 1. Logging configuration (Practical 11)
+# --------------------------------------------------
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 app.logger.setLevel(logging.INFO)
 
-MODEL_PATH = Path("student_result_model.pkl")
+# --------------------------------------------------
+# 2. Model configuration
+# --------------------------------------------------
+
+MODEL_PATH = Path(__file__).resolve().parent / "student_result_model.pkl"
 
 FEATURES = [
     "attendance",
@@ -33,7 +40,10 @@ FEATURES = [
     "previous_score",
 ]
 
-# Practical 12: Prometheus metrics
+# --------------------------------------------------
+# 3. Prometheus metrics (Practical 12)
+# --------------------------------------------------
+
 HTTP_REQUESTS = Counter(
     "student_api_http_requests_total",
     "Total HTTP requests received by the Student Result Prediction API",
@@ -48,7 +58,7 @@ HTTP_LATENCY = Histogram(
 
 PREDICTIONS = Counter(
     "student_api_predictions_total",
-    "Total Student Result Prediction attempts",
+    "Total student result prediction attempts",
     ["result"],
 )
 
@@ -57,13 +67,19 @@ MODEL_LOADED = Gauge(
     "Whether the Student Result Prediction model is loaded",
 )
 
+# Make the metric available before the first model load.
+MODEL_LOADED.set(0)
+
+
+# --------------------------------------------------
+# 4. Model loading
+# --------------------------------------------------
 
 def load_model():
     try:
         if not MODEL_PATH.exists():
             raise FileNotFoundError(
-                "student_result_model.pkl was not found. "
-                "Run the training pipeline first."
+                f"Model file not found: {MODEL_PATH}"
             )
 
         model = joblib.load(MODEL_PATH)
@@ -76,7 +92,10 @@ def load_model():
         raise
 
 
-# Practical 11 + Practical 12 request instrumentation
+# --------------------------------------------------
+# 5. Request logging
+# --------------------------------------------------
+
 @app.before_request
 def log_request_start():
     g.request_id = str(uuid.uuid4())
@@ -98,7 +117,7 @@ def log_request_end(response):
 
     response.headers["X-Request-ID"] = request_id
 
-    # Do not count Prometheus scrapes as normal API traffic.
+    # Exclude Prometheus scrapes from normal API request metrics.
     if request.path != "/metrics":
         HTTP_REQUESTS.labels(
             method=request.method,
@@ -124,6 +143,10 @@ def log_request_end(response):
     return response
 
 
+# --------------------------------------------------
+# 6. Home endpoint
+# --------------------------------------------------
+
 @app.get("/")
 def home():
     return jsonify({
@@ -132,19 +155,31 @@ def home():
     }), 200
 
 
+# --------------------------------------------------
+# 7. Health check endpoint
+# --------------------------------------------------
+
 @app.get("/health")
 def health_check():
     try:
         load_model()
+
         return jsonify({
             "status": "healthy",
             "service": "student-result-prediction",
         }), 200
 
-    except (FileNotFoundError, OSError, ValueError):
-        app.logger.exception("Health check failed")
-        return jsonify({"status": "unhealthy"}), 503
+    except Exception:
+        app.logger.exception("event=health_check_failed")
 
+        return jsonify({
+            "status": "unhealthy",
+        }), 503
+
+
+# --------------------------------------------------
+# 8. Prometheus metrics endpoint
+# --------------------------------------------------
 
 @app.get("/metrics")
 def metrics():
@@ -154,44 +189,89 @@ def metrics():
     )
 
 
+# --------------------------------------------------
+# 9. Student result prediction endpoint
+# --------------------------------------------------
+
 @app.post("/predict")
 def predict():
     data = request.get_json(silent=True)
 
+    # Validate JSON body.
     if not isinstance(data, dict):
+        PREDICTIONS.labels(result="error").inc()
+
         app.logger.warning(
-            "Prediction rejected: JSON body is missing or invalid"
+            "event=prediction_rejected reason=invalid_json"
         )
+
         return jsonify({
-            "error": "JSON request body is required"
+            "error": "JSON request body is required",
         }), 400
 
+    # Validate required input fields.
     missing_fields = [
         feature for feature in FEATURES
         if feature not in data
     ]
 
     if missing_fields:
+        PREDICTIONS.labels(result="error").inc()
+
         app.logger.warning(
-            "Prediction rejected: missing fields=%s",
+            "event=prediction_rejected missing_fields=%s",
             missing_fields,
         )
+
         return jsonify({
             "error": "Missing required fields",
             "missing_fields": missing_fields,
         }), 400
 
+    # Convert and validate feature values.
     try:
-        sample = pd.DataFrame([{
-            feature: float(data[feature])
-            for feature in FEATURES
-        }])
+        values = {}
 
+        for feature in FEATURES:
+            value = data[feature]
+
+            # Reject missing values, booleans and non-numeric values.
+            if value is None or isinstance(value, bool):
+                raise ValueError(
+                    f"Invalid numeric value for {feature}"
+                )
+
+            values[feature] = float(value)
+
+        sample = pd.DataFrame([values], columns=FEATURES)
+
+        # Reject NaN and infinite values.
+        if not all(
+            pd.notna(value) and abs(value) != float("inf")
+            for value in values.values()
+        ):
+            raise ValueError("Feature values must be finite numbers")
+
+    except (TypeError, ValueError, OverflowError):
+        PREDICTIONS.labels(result="error").inc()
+
+        app.logger.warning(
+            "event=prediction_rejected reason=invalid_features"
+        )
+
+        return jsonify({
+            "error": "Feature values must be valid finite numbers",
+        }), 400
+
+    # Run model inference.
+    try:
         model = load_model()
         prediction_code = int(model.predict(sample)[0])
+
         prediction = "PASS" if prediction_code == 1 else "FAIL"
 
         PREDICTIONS.labels(result="success").inc()
+
         app.logger.info(
             "event=prediction_succeeded result=%s",
             prediction,
@@ -202,22 +282,22 @@ def predict():
             "prediction_code": prediction_code,
         }), 200
 
-    except (TypeError, ValueError):
-        PREDICTIONS.labels(result="error").inc()
-        app.logger.warning(
-            "Prediction rejected: invalid numeric feature values"
-        )
-        return jsonify({
-            "error": "Feature values must be valid numeric inputs"
-        }), 400
-
     except Exception:
         PREDICTIONS.labels(result="error").inc()
+
         app.logger.exception("event=prediction_failed")
+
         return jsonify({
-            "error": "Prediction failed"
+            "error": "Prediction failed",
         }), 500
 
 
+# --------------------------------------------------
+# 10. Run Flask application
+# --------------------------------------------------
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+    )
